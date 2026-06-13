@@ -1,105 +1,129 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-#
 
 """
-    Telegram bot that search sounds in www.myinstants.com
+    Telegram bot that searches sounds on www.myinstants.com
     Author: Luiz Francisco Rodrigues da Silva <luizfrdasilva@gmail.com>
 """
-import os
+
 import logging
+import os
+import sys
 from uuid import uuid4
 
-
 from telegram import InlineQueryResultVoice, Update
-from telegram.ext import Application, CommandHandler, ContextTypes, InlineQueryHandler
-
-from myinstants import search_instants
-
-# Enable logging
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    InlineQueryHandler,
 )
 
-# set higher logging level for httpx to avoid all GET and POST requests being logged
+from myinstants import HTTPErrorException, search_instants
+
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
 
-async def start(update: Update, _: ContextTypes.DEFAULT_TYPE):
-    """Start command handler"""
+# ---------------------------------------------------------------------------
+# Command handlers
+# ---------------------------------------------------------------------------
+
+async def start(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /start."""
     await update.message.reply_text(
         "Hi!\nYou can use this bot in any chat, just type "
         "@myinstantsbot query message\nEnjoy!"
     )
 
 
-async def help_command(update: Update, _: ContextTypes.DEFAULT_TYPE):
-    """Help command"""
+async def help_command(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /help."""
     await update.message.reply_text(
-        "This bot search sounds in myinstants.com\n"
+        "This bot searches sounds on myinstants.com\n"
         "You can use it in any chat, just type "
         "@myinstantsbot query message"
     )
 
 
-async def info_command(update: Update, _: ContextTypes.DEFAULT_TYPE):
-    """Info command"""
+async def info_command(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /info."""
     await update.message.reply_text(
         "Source code: https://www.github.com/heylouiz/myinstantsbot\n"
         "Developer: @heylouiz"
     )
 
 
-async def inline_query(update: Update, _: ContextTypes.DEFAULT_TYPE):
-    """Inline query handler"""
-    query = update.inline_query.query
+# ---------------------------------------------------------------------------
+# Inline query handler
+# ---------------------------------------------------------------------------
 
+async def inline_query(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle inline queries."""
+    query = update.inline_query.query
     if not query:
         return
 
-    inline_results = list()
-    results = await search_instants(query)
+    try:
+        results = await search_instants(query)
+    except HTTPErrorException as exc:
+        logger.warning("search_instants failed for query %r: %s", query, exc)
+        await update.inline_query.answer([], cache_time=0)
+        return
 
-    for instant in results:
-        inline_results.append(
-            InlineQueryResultVoice(
-                id=str(uuid4()), title=instant["text"], voice_url=instant["url"]
-            )
+    inline_results = [
+        InlineQueryResultVoice(
+            id=str(uuid4()),
+            title=instant["text"],
+            voice_url=instant["url"],
         )
+        for instant in results[:10]
+    ]
 
-    await update.inline_query.answer(inline_results[:10], cache_time=300)
-
-
-async def error_handler(update, context):
-    """Error Handler"""
-    logger.warning('Update "%s" caused error "%s"', update, context.error)
+    await update.inline_query.answer(inline_results, cache_time=300)
 
 
-def main():
-    """Main function"""
-    if "TELEGRAM_TOKEN" not in os.environ:
-        logger.error(
-            f"Missing environment variable TELEGRAM_TOKEN! See README.md file for more information."
-        )
-        return 1
+# ---------------------------------------------------------------------------
+# Error handler
+# ---------------------------------------------------------------------------
 
-    # Create the Application and pass it your bot's token.
-    application = Application.builder().token(os.environ.get("TELEGRAM_TOKEN")).concurrent_updates(True).build()
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log errors with full traceback."""
+    logger.error("Update %r caused error: %s", update, context.error, exc_info=context.error)
 
-    # on different commands - answer in Telegram
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    token = os.environ.get("TELEGRAM_TOKEN")
+    if not token:
+        logger.error("Missing environment variable TELEGRAM_TOKEN. See README.md.")
+        sys.exit(1)
+
+    application = (
+        Application.builder()
+        .token(token)
+        .concurrent_updates(True)
+        .build()
+    )
+
     application.add_handler(CommandHandler("start", start, block=False))
     application.add_handler(CommandHandler("help", help_command, block=False))
     application.add_handler(CommandHandler("info", info_command, block=False))
-
+    application.add_handler(InlineQueryHandler(inline_query, block=False))
     application.add_error_handler(error_handler, block=False)
 
-    # on inline queries - show corresponding inline results
-    application.add_handler(InlineQueryHandler(inline_query, block=False))
-
-    # Run the bot until the user presses Ctrl-C
-    application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    application.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,
+    )
 
 
 if __name__ == "__main__":

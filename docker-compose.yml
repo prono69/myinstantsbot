@@ -1,13 +1,13 @@
-version: '3.8'
-
 services:
   myinstantsbot:
-    image: heylouiz/myinstantsbot:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: myinstantsbot
     restart: unless-stopped
     environment:
-     - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
-     - MYINSTANTS_USERNAME=${MYINSTANTS_USERNAME}
-     - MYINSTANTS_PASSWORD=${MYINSTANTS_PASSWORD}
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - MYINSTANTS_USERNAME=${MYINSTANTS_USERNAME}
+      - MYINSTANTS_PASSWORD=${MYINSTANTS_PASSWORD}
     volumes:
-     - .:/app
+      - .:/app

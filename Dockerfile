@@ -1,12 +1,28 @@
-FROM alpine
+# ── Build stage ────────────────────────────────────────────────────────────
+FROM python:3.12-alpine AS builder
 
-RUN apk --update --no-cache add \
-    python3 python3-dev build-base libressl-dev libffi-dev py3-pip libxml2-dev libxslt-dev py3-setuptools py3-wheel
+# Install only the compile-time deps needed to build C extensions
+RUN apk add --no-cache \
+    gcc musl-dev libffi-dev libxml2-dev libxslt-dev libressl-dev
 
 WORKDIR /app
 
-ADD . /app
+# Install deps into an isolated prefix so we can copy them cleanly
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
-RUN pip3 install --trusted-host pypi.python.org --break-system-packages -r requirements.txt
+# ── Runtime stage ──────────────────────────────────────────────────────────
+FROM python:3.12-alpine AS runtime
 
-CMD ["python3", "myinstantsbot.py"]
+# Only runtime shared libraries (no compilers, no headers)
+RUN apk add --no-cache libxml2 libxslt libressl
+
+WORKDIR /app
+
+# Pull in only the installed packages from the build stage
+COPY --from=builder /install /usr/local
+
+# Copy source last so code changes don't bust the package cache layer
+COPY . .
+
+CMD ["python", "myinstantsbot.py"]
